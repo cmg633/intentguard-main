@@ -1,0 +1,45 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://intentguard:intentguard@postgres:5432/intentguard
+      REDIS_URL: redis://redis:6379
+      SESSION_SECRET: change-this-in-local-development
+      PAYMENT_MODE: TEST
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: intentguard
+      POSTGRES_PASSWORD: intentguard
+      POSTGRES_DB: intentguard
+    ports:
+      - "5432:5432"
+    volumes:
+      - intentguard-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intentguard -d intentguard"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - intentguard-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  intentguard-postgres:
+  intentguard-redis:

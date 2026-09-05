@@ -1,0 +1,365 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+  REVIEWER
+}
+
+enum AgentStatus {
+  ACTIVE
+  PAUSED
+}
+
+enum IntentStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
+enum TrajectoryStatus {
+  RUNNING
+  COMPLETED
+  BLOCKED
+  FAILED
+}
+
+enum TransactionStatus {
+  PENDING
+  EVALUATED
+  AUTHORIZED
+  BLOCKED
+  REVIEW
+  FAILED
+}
+
+enum Decision {
+  ALLOW
+  REVIEW
+  BLOCK
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum EventSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum EventStatus {
+  OPEN
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+enum ReviewStatus {
+  OPEN
+  APPROVED
+  REJECTED
+}
+
+enum PaymentStatus {
+  CREATED
+  AUTHORIZED
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  passwordHash String?
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  sessions  Session[]
+  agents    Agent[]
+  intents   Intent[]
+  policies  Policy[]
+  reviews   ReviewCase[] @relation("ReviewerCases")
+  eventTransitions SecurityEventTransition[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  userId    String
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model Agent {
+  id            String   @id @default(cuid())
+  userId        String
+  name          String
+  status        AgentStatus @default(ACTIVE)
+  trustScore    Int      @default(50)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions      AgentSession[]
+  trajectories  Trajectory[]
+  @@index([userId])
+}
+
+model AgentSession {
+  id        String   @id @default(cuid())
+  agentId   String
+  state     Json
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  @@index([agentId])
+  @@index([expiresAt])
+}
+
+model Intent {
+  id                 String   @id @default(cuid())
+  userId             String
+  naturalLanguageIntent String
+  structuredIntent   Json
+  merchantScope      String?
+  category           String?
+  maxAmount          Decimal?
+  currency           String   @default("INR")
+  expiresAt          DateTime?
+  status             IntentStatus @default(ACTIVE)
+  createdAt          DateTime @default(now())
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mandate           Mandate?
+  trajectories      Trajectory[]
+  @@index([userId])
+  @@index([status])
+}
+
+model Mandate {
+  id                String   @id @default(cuid())
+  intentId          String   @unique
+  maxAmount         Decimal?
+  currency          String
+  allowedCategories String[]
+  allowedMerchants  String[]
+  expiresAt         DateTime?
+  requiresReviewAbove Decimal?
+  createdAt         DateTime @default(now())
+  intent            Intent   @relation(fields: [intentId], references: [id], onDelete: Cascade)
+}
+
+model Trajectory {
+  id          String   @id @default(cuid())
+  agentId     String
+  intentId    String
+  status      TrajectoryStatus @default(RUNNING)
+  startedAt   DateTime @default(now())
+  completedAt DateTime?
+  agent       Agent    @relation(fields: [agentId], references: [id])
+  intent      Intent   @relation(fields: [intentId], references: [id])
+  actions     AgentAction[]
+  transaction Transaction?
+  @@index([agentId])
+  @@index([intentId])
+}
+
+model AgentAction {
+  id           String   @id @default(cuid())
+  trajectoryId String
+  sequence     Int
+  actionType   String
+  toolName     String
+  parameters   Json
+  result       Json?
+  timestamp    DateTime @default(now())
+  hash         String
+  trajectory   Trajectory @relation(fields: [trajectoryId], references: [id], onDelete: Cascade)
+  @@unique([trajectoryId, sequence])
+  @@index([trajectoryId])
+  @@index([timestamp])
+}
+
+model Transaction {
+  id                String   @id @default(cuid())
+  trajectoryId      String   @unique
+  merchant          String
+  amount            Decimal
+  currency          String
+  category          String
+  destination       String
+  razorpayPaymentId String?
+  status            TransactionStatus @default(PENDING)
+  createdAt         DateTime @default(now())
+  trajectory        Trajectory @relation(fields: [trajectoryId], references: [id])
+  evaluations       RiskEvaluation[]
+  events            SecurityEvent[]
+  reviews           ReviewCase[]
+  payments          Payment[]
+  @@index([trajectoryId])
+  @@index([createdAt])
+  @@index([status])
+}
+
+model RiskEvaluation {
+  id           String   @id @default(cuid())
+  transactionId String
+  riskScore    Int
+  riskLevel    RiskLevel
+  decision     Decision
+  modelVersion String
+  explanation  String
+  mlScore      Float?
+  anomalyScore Float?
+  policyScore  Float?
+  latencyMs    Float?
+  investigator Json?
+  factors      RiskFactor[]
+  createdAt    DateTime @default(now())
+  transaction  Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@index([transactionId])
+  @@index([riskLevel])
+  @@index([decision])
+  @@index([createdAt])
+}
+
+model RiskFactor {
+  id           String   @id @default(cuid())
+  evaluationId String
+  name         String
+  score        Int
+  severity     EventSeverity
+  explanation  String
+  evaluation   RiskEvaluation @relation(fields: [evaluationId], references: [id], onDelete: Cascade)
+  @@index([evaluationId])
+}
+
+model SecurityEvent {
+  id            String   @id @default(cuid())
+  transactionId String
+  severity      EventSeverity
+  eventType     String
+  description   String
+  status        EventStatus @default(OPEN)
+  createdAt     DateTime @default(now())
+  resolvedAt    DateTime?
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  transitions   SecurityEventTransition[]
+  @@index([transactionId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model SecurityEventTransition {
+  id             String   @id @default(cuid())
+  eventId        String
+  actorId        String
+  previousStatus EventStatus
+  newStatus      EventStatus
+  reason         String
+  createdAt      DateTime @default(now())
+  event          SecurityEvent @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  actor          User @relation(fields: [actorId], references: [id])
+  @@index([eventId])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model AuditRecord {
+  id         String   @id @default(cuid())
+  sequence   Int      @unique
+  entityType String
+  entityId   String
+  payload    Json
+  previousHash String
+  hash       String
+  createdAt  DateTime @default(now())
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Policy {
+  id                    String   @id @default(cuid())
+  userId                String
+  version               Int
+  maxSpendingLimit      Decimal?
+  allowedCategories     String[]
+  allowedMerchants      String[]
+  requiresReviewAbove   Decimal?
+  velocityThreshold     Int      @default(3)
+  riskThreshold         Int      @default(60)
+  paymentMode           String   @default("TEST")
+  createdAt             DateTime @default(now())
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, version])
+  @@index([userId])
+}
+
+model ReviewCase {
+  id           String   @id @default(cuid())
+  transactionId String
+  assignedTo   String?
+  status       ReviewStatus @default(OPEN)
+  reason       String
+  resolution   String?
+  createdAt    DateTime @default(now())
+  resolvedAt   DateTime?
+  transaction  Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  reviewer     User?    @relation("ReviewerCases", fields: [assignedTo], references: [id])
+  @@index([transactionId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Payment {
+  id                String   @id @default(cuid())
+  transactionId     String
+  provider          String
+  providerOrderId   String?
+  providerPaymentId String?
+  amount            Decimal
+  currency          String
+  status            PaymentStatus @default(CREATED)
+  createdAt         DateTime @default(now())
+  transaction       Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  @@index([transactionId])
+  @@index([createdAt])
+}
+
+model EvaluationDataset {
+  id          String   @id @default(cuid())
+  name        String
+  version     String
+  sampleCount Int
+  metadata    Json
+  createdAt   DateTime @default(now())
+  modelVersions ModelVersion[]
+}
+
+model ModelVersion {
+  id          String   @id @default(cuid())
+  version     String   @unique
+  datasetId   String?
+  artifactUri String?
+  metrics     Json?
+  active      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  dataset     EvaluationDataset? @relation(fields: [datasetId], references: [id])
+  @@index([active])
+}
